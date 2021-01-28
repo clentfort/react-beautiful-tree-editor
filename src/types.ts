@@ -2,18 +2,15 @@ export type Maybe<T> = T | null | undefined;
 
 export type Path = number[];
 
-export interface Node<T = string> {
+export interface Node<T = any> {
 	value: T;
 	children?: Node<T>[];
 }
 
-export interface Item<T = string> {
+export interface Item<T = any> {
 	value: T;
 	path: Path;
 	start: number;
 	end: number;
 }
 
-export interface RenderItem<T> extends Item<T> {
-  collapsed: boolean;
-}

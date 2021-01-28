@@ -1,129 +1,88 @@
-import React, {  ReactElement, ReactNode } from 'react';
+import * as React from 'react';
 import {
-	BeforeCapture,
-	DragDropContext,
-	DragDropContextProps,
-	DraggableLocation,
-	DropResult,
-	ResponderProvided,
+	Droppable,
+	DroppableProps,
+	DroppableProvided,
+	DroppableStateSnapshot,
 } from 'react-beautiful-dnd';
-import invariant from 'tiny-invariant';
 import treeToList from './tree-to-list';
-import { Path, Maybe, Node, RenderItem } from './types';
+import { Item, Node, Path } from './types';
+import AppContext from './AppContext';
+import TreeContext from './TreeContext';
 
-type DragEndEventResultSource = DropResult['source'];
-type DragEndEventResultDestination = NonNullable<DropResult['destination']>;
-
-interface DragEndEventResultSourceWithPath extends DragEndEventResultSource {
+interface ItemWithCollapsed<T> {
+	value: T;
+	collapsed: boolean;
 	path: Path;
 }
 
-interface DragEndEventResultDestinationWithPath
-	extends DragEndEventResultDestination {
-	path: Path;
+type ItemRenderer<T> = (
+	item: ItemWithCollapsed<T>,
+	index: number,
+) => React.ReactChild;
+
+interface ChildrenArg<T> {
+	render: (itemRenderer: ItemRenderer<T>) => React.ReactChild[];
+	provided: DroppableProvided;
+	snapshot: DroppableStateSnapshot;
 }
 
-interface DragEndEventResultWithPath
-	extends Omit<DropResult, 'source' | 'destination'> {
-	source: DragEndEventResultSourceWithPath;
-	destination?: DragEndEventResultDestinationWithPath;
-}
-
-type DragEndEventHandlerWithPath = (
-	result: DragEndEventResultWithPath,
-	provided: ResponderProvided,
-) => void;
-
-interface DraggableLocationWithPath extends DraggableLocation {
-	path: Path;
-}
-
-type ItemRenderer<T> = (item: RenderItem<T>, index: number) => ReactElement;
-
-export interface Props<T>
-	extends Omit<DragDropContextProps, 'children' | 'onDragEnd'> {
-	nodes: Node<T>[];
-	children: (render: ItemRenderer<T>) => ReactNode[];
-	onDragEnd: DragEndEventHandlerWithPath;
+export interface Props<T> extends Omit<DroppableProps, 'children'> {
+	nodes: Array<Node<T>>;
+	children: (arg: ChildrenArg<T>) => React.ReactElement;
 }
 
 export default function Tree<T>({
-	children,
 	nodes,
-	// Start DragDropContext props
-	onDragEnd,
-	...dragDropContextProps
+	children,
+	...droppableProps
 }: Props<T>) {
+	const [itemsBeignDragged, setItemsBeingDragged] = React.useState<Item<T>[]>(
+		[],
+	);
+	const appContext = React.useContext(AppContext);
 	const items = React.useMemo(() => {
 		return treeToList(nodes);
 	}, [nodes]);
 
-	const [itemsToHide, setItemsToHide] = React.useState<
-		Maybe<{ start: number; end: number }>
-	>();
+	const { droppableId } = droppableProps;
+
+	React.useEffect(() => {
+		appContext.droppables.set(droppableId, { items, setItemsBeingDragged });
+	}, [droppableId, items]);
+
+	const visibleItems = React.useMemo(() => {
+		if (itemsBeignDragged.length === 0) {
+			return items;
+		}
+
+		const { start, end } = itemsBeignDragged[0];
+
+		return items.filter((_item, index) => {
+			return index <= start || index >= end;
+		});
+	}, [items, itemsBeignDragged]);
 
 	const render = React.useCallback(
 		function render(renderItem: ItemRenderer<T>) {
-			const { start, end } = itemsToHide ?? { start: items.length, end: 0 };
-			return items
-				.filter((_item, index) => {
-					return index <= start || index >= end;
-				})
-				.map((item, index) => {
-					return renderItem({ ...item, collapsed: index === start }, index);
-				});
+			const start =
+				itemsBeignDragged.length > 0 ? itemsBeignDragged[0].start : -1;
+			return visibleItems.map((item, index) => {
+				const collapsed = index === start;
+				const path = collapsed ? [] : item.path;
+				return renderItem({ value: item.value, collapsed, path }, index);
+			});
 		},
-		[items, itemsToHide],
+		[visibleItems],
 	);
 
-	function handleBeforeCapture({ draggableId }: BeforeCapture) {
-		const item = items[draggableId];
-		invariant(item, 'Invalid item in beforeCapture');
-		const { start, end } = item;
-		if (end - start > 1) {
-			setItemsToHide({ start, end });
-		}
-	}
-
-	function handleDragEnd(result: DropResult, provided: ResponderProvided) {
-		const { source, destination } = result;
-		const sourceItem = items[source.index];
-		console.log(sourceItem);
-		invariant(sourceItem, 'Invalid item for source in dragEnd');
-		const sourceWithPath: DraggableLocationWithPath = {
-			...source,
-			path: sourceItem.path,
-		};
-
-		let destinationWithPath: DraggableLocationWithPath | undefined;
-		if (destination != null) {
-			const { start, end } = itemsToHide ?? { start: 0, end: 1 };
-			console.log(destination.index, end - start, items.length);
-			const destinationItem = items[destination.index];
-			invariant(destinationItem, 'Invalid item for destination in dragEnd');
-			destinationWithPath = {
-				...destination,
-				path: destinationItem.path,
-			};
-		}
-
-		const resultWithPathes = {
-			...result,
-			source: sourceWithPath,
-			destination: destinationWithPath,
-		};
-
-		setItemsToHide(null);
-		onDragEnd(resultWithPathes, provided);
-	}
-
 	return (
-		<DragDropContext
-			{...dragDropContextProps}
-			onDragEnd={handleDragEnd}
-			onBeforeCapture={handleBeforeCapture}
-		>
-			{children(render)}
-		</DragDropContext>
+		<TreeContext.Provider value={droppableId}>
+			<Droppable {...droppableProps}>
+				{(provided, snapshot) => {
+					return children({ render, provided, snapshot });
+				}}
+			</Droppable>
+		</TreeContext.Provider>
 	);
 }
